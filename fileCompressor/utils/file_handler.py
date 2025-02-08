@@ -9,6 +9,28 @@ class FileHandler:
         self._current_file = None
         self._file_size = 0
 
+    @property
+    def chunk_size(self) -> int:
+        """Get the current chunk size"""
+        return self._chunk_size
+
+    @chunk_size.setter
+    def chunk_size(self, value: int) -> None:
+        """Set the chunk size"""
+        if value <= 0:
+            raise ValueError("Chunk size must be positive")
+        self._chunk_size = value
+
+    @property
+    def file_size(self) -> int:
+        """Get the current file size"""
+        return self._file_size
+
+    @property
+    def is_open(self) -> bool:
+        """Check if a file is currently open"""
+        return self._current_file is not None
+
     def open_file(self, file_path: Path, mode: str = 'rb'):
         self._current_file = open(file_path, mode)
         if mode == 'rb':
