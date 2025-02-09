@@ -14,3 +14,7 @@ class TestUI(unittest.TestCase):
         required_methods = {'start', 'process_file', 'update_progress',
                             'show_error', 'show_stats'}
         self.assertEqual(required_methods, abstract_methods)
+
+
+if __name__ == '__main__':
+    unittest.main()

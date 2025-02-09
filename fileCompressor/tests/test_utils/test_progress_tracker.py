@@ -98,3 +98,7 @@ class TestProgressTracker(unittest.TestCase):
         with ProgressTracker(1000) as tracker:
             tracker.update(500)
             self.assertEqual(tracker.stats.progress_percentage, 50.0)
+
+
+if __name__ == '__main__':
+    unittest.main()

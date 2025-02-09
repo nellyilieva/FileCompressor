@@ -126,3 +126,7 @@ class TestBitHandler(unittest.TestCase):
             read_data.append(byte)
 
         self.assertEqual(bytes(read_data), original_data)
+
+
+if __name__ == '__main__':
+    unittest.main()

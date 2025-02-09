@@ -115,3 +115,7 @@ class TestFileHandler(unittest.TestCase):
             self.handler.write_chunk(b'test')
         with self.assertRaises(IOError):
             self.handler.open_file(Path('nonexistent.txt'), 'rb')
+
+
+if __name__ == '__main__':
+    unittest.main()

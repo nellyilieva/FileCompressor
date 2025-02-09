@@ -13,3 +13,7 @@ class TestCompressor(unittest.TestCase):
         abstract_methods = BaseCompressor.__abstractmethods__
         required_methods = {'compress', 'decompress', 'get_compression_stats'}
         self.assertEqual(required_methods, abstract_methods)
+
+
+if __name__ == '__main__':
+    unittest.main()
