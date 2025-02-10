@@ -1,90 +1,111 @@
 import unittest
 from pathlib import Path
-import tempfile
-import shutil
-import os
-from ui.cli.command_line import format_size, get_file_info, process_file
-from compressors.rle import RLECompressor
+from unittest.mock import Mock, patch
+import io
+import sys
+from contextlib import contextmanager
+
+from ui.cli.command_line import CommandLineUI
 
 
-class TestCLI(unittest.TestCase):
+@contextmanager
+def capture_output():
+    new_out, new_err = io.StringIO(), io.StringIO()
+    old_out, old_err = sys.stdout, sys.stderr
+    try:
+        sys.stdout, sys.stderr = new_out, new_err
+        yield sys.stdout, sys.stderr
+    finally:
+        sys.stdout, sys.stderr = old_out, old_err
+
+
+class TestCommandLineUI(unittest.TestCase):
     def setUp(self):
-        """Set up test environment before each test"""
-        self.temp_dir = tempfile.mkdtemp()
-        self.compressor = RLECompressor()
+        self.cli = CommandLineUI()
+        self.mock_compressor = Mock()
+        # Set up mock stats return value
+        self.mock_stats = {
+            'original_size': 1000,
+            'compressed_size': 500,
+            'compression_ratio': 50.0,
+            'time_taken': 1.5
+        }
+        self.mock_compressor.get_compression_stats.return_value = self.mock_stats
+        self.cli.compressor = self.mock_compressor
 
-    def tearDown(self):
-        """Clean up test environment after each test"""
-        shutil.rmtree(self.temp_dir)
+    def test_show_error(self):
+        with capture_output() as (out, err):
+            self.cli.show_error("Test error")
+            self.assertEqual(err.getvalue().strip(), "Error: Test error")
 
-    def create_test_file(self, content: bytes) -> Path:
-        """Create a test file with given content"""
-        file_path = Path(self.temp_dir) / "test_file.txt"
-        with open(file_path, 'wb') as f:
-            f.write(content)
-        return file_path
+    def test_update_progress(self):
+        with capture_output() as (out, err):
+            self.cli.update_progress(50.0, "Processing")
+            self.assertIn("50.0%", out.getvalue())
+            self.assertIn("Processing", out.getvalue())
+
+    def test_show_stats(self):
+        stats = {
+            'original_size': 1000,
+            'compressed_size': 500,
+            'compression_ratio': 50.0,
+            'time_taken': 1.5
+        }
+        with capture_output() as (out, err):
+            self.cli.show_stats(stats)
+            output = out.getvalue()
+            self.assertIn("Original Size: 1000.00 B", output)
+            self.assertIn("Compressed Size: 500.00 B", output)
+            self.assertIn("Compression Ratio: 50.00%", output)
+            self.assertIn("Time Taken: 1.50 seconds", output)
+
+    @patch('builtins.input')
+    def test_handle_compression_file_not_found(self, mock_input):
+        mock_input.side_effect = ["nonexistent.txt", "output.txt"]
+        with capture_output() as (out, err):
+            self.cli._handle_compression()
+            self.assertIn("File not found", err.getvalue())
+
+    @patch('builtins.input')
+    def test_handle_decompression_file_not_found(self, mock_input):
+        mock_input.side_effect = ["nonexistent.txt", "output.txt"]
+        with capture_output() as (out, err):
+            self.cli._handle_decompression()
+            self.assertIn("File not found", err.getvalue())
 
     def test_format_size(self):
-        """Test size formatting function"""
-        self.assertEqual(format_size(500), "500.00 B")
-        self.assertEqual(format_size(1024), "1.00 KB")
-        self.assertEqual(format_size(1024 * 1024), "1.00 MB")
-        self.assertEqual(format_size(1024 * 1024 * 1024), "1.00 GB")
+        test_cases = [
+            (500, "500.00 B"),
+            (1024, "1.00 KB"),
+            (1024 * 1024, "1.00 MB"),
+            (1024 * 1024 * 1024, "1.00 GB"),
+        ]
+        for size, expected in test_cases:
+            with self.subTest(size=size):
+                self.assertEqual(self.cli._format_size(size), expected)
 
-    def test_get_file_info(self):
-        """Test file information retrieval"""
-        test_file = self.create_test_file(b'Test content')
-        info = get_file_info(test_file)
+    @patch('pathlib.Path.exists')
+    @patch('builtins.input')
+    def test_process_file_compression(self, mock_input, mock_exists):
+        # Setup
+        mock_exists.return_value = True
+        mock_input.side_effect = ["test.txt", "test.compressed"]
 
-        self.assertIn("File Information:", info)
-        self.assertIn(str(test_file), info)
-        self.assertIn("Size:", info)
-        self.assertIn("Last modified:", info)
+        # Execute
+        self.cli._handle_compression()
 
-    def test_process_file_compression(self):
-        """Test file compression process"""
-        # Create test file with repeating content
-        test_content = b'A' * 1000
-        input_file = self.create_test_file(test_content)
-        output_file = Path(self.temp_dir) / "compressed.rle"
+        # Verify
+        self.mock_compressor.compress.assert_called_once()
+        self.mock_compressor.get_compression_stats.assert_called_once()
 
-        # Test compression
-        success = process_file(self.compressor, input_file, output_file, 'compress')
-        self.assertTrue(success)
-        self.assertTrue(output_file.exists())
+    def test_process_file_invalid_operation(self):
+        with self.assertRaises(ValueError):
+            self.cli.process_file("invalid", Path("input.txt"), Path("output.txt"))
 
-        # Verify compressed file is smaller
-        self.assertLess(output_file.stat().st_size, input_file.stat().st_size)
-
-    def test_process_file_decompression(self):
-        """Test file decompression process"""
-        # Create and compress test file
-        test_content = b'B' * 1000
-        input_file = self.create_test_file(test_content)
-        compressed_file = Path(self.temp_dir) / "compressed.rle"
-        decompressed_file = Path(self.temp_dir) / "decompressed.txt"
-
-        # Compress first
-        process_file(self.compressor, input_file, compressed_file, 'compress')
-
-        # Test decompression
-        success = process_file(self.compressor, compressed_file, decompressed_file, 'decompress')
-        self.assertTrue(success)
-        self.assertTrue(decompressed_file.exists())
-
-        # Verify content matches original
-        with open(decompressed_file, 'rb') as f:
-            decompressed_content = f.read()
-        self.assertEqual(decompressed_content, test_content)
-
-    def test_process_file_error_handling(self):
-        """Test error handling in file processing"""
-        # Test with non-existent input file
-        input_file = Path(self.temp_dir) / "nonexistent.txt"
-        output_file = Path(self.temp_dir) / "output.rle"
-
-        success = process_file(self.compressor, input_file, output_file, 'compress')
-        self.assertFalse(success)
+    def test_show_stats_invalid_format(self):
+        with capture_output() as (out, err):
+            self.cli.show_stats(None)  # Test with invalid stats
+            self.assertIn("Invalid statistics format", err.getvalue())
 
 
 if __name__ == '__main__':

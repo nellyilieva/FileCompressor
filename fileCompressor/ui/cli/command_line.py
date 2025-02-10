@@ -1,105 +1,132 @@
 from pathlib import Path
-import time
+import sys
+from core.interfaces.ui import BaseUI
 from compressors.rle import RLECompressor
 
 
-def format_size(size_in_bytes: int) -> str:
-    """Format file size in human readable format"""
-    for unit in ['B', 'KB', 'MB', 'GB']:
-        if size_in_bytes < 1024:
-            return f"{size_in_bytes:.2f} {unit}"
-        size_in_bytes /= 1024
-    return f"{size_in_bytes:.2f} TB"
+class CommandLineUI(BaseUI):
+    def __init__(self):
+        self.compressor = RLECompressor()
 
+    def start(self) -> None:
+        while True:
+            self._print_menu()
+            choice = input("Enter your choice (1-4): ").strip()
 
-def get_file_info(file_path: Path) -> str:
-    """Get formatted file information"""
-    try:
-        stats = file_path.stat()
-        return (f"\nFile Information:"
-                f"\nPath: {file_path}"
-                f"\nSize: {format_size(stats.st_size)}"
-                f"\nLast modified: {time.ctime(stats.st_mtime)}")
-    except Exception as e:
-        return f"\nError getting file info: {str(e)}"
+            if choice == '1':
+                self._handle_compression()
+            elif choice == '2':
+                self._handle_decompression()
+            elif choice == '3':
+                self._display_file_info()
+            elif choice == '4':
+                sys.exit(0)
+            else:
+                print("Invalid choice. Please try again.")
 
+    def process_file(self, operation: str, input_file: Path, output_file: Path, algorithm=None):
+        if operation not in ['compress', 'decompress']:
+            self.show_error(f"Invalid operation: {operation}")
+            raise ValueError(f"Invalid operation: {operation}")
 
-def process_file(compressor: RLECompressor, input_path: Path, output_path: Path, mode: str) -> bool:
-    """Process a file with the given compressor and mode"""
-    try:
-        start_time = time.time()
+        try:
+            if operation == 'compress':
+                self.compressor.compress(input_file, output_file)
+            else:  # operation == 'decompress'
+                self.compressor.decompress(input_file, output_file)
+        except Exception as e:
+            self.show_error(str(e))
+            raise
 
-        if mode == 'compress':
-            print(f"\nCompressing {input_path}...")
-            compressor.compress(input_path, output_path)
-        else:
-            print(f"\nDecompressing {input_path}...")
-            compressor.decompress(input_path, output_path)
+    def update_progress(self, progress: float, status: str):
+        bar_width = 50
+        filled = int(bar_width * progress / 100)
+        bar = '=' * filled + '-' * (bar_width - filled)
+        print(f'\rProgress: [{bar}] {progress:.1f}% {status}', end='')
+        if progress >= 100:
+            print()
 
-        stats = compressor.get_compression_stats()
-        end_time = time.time()
+    def show_error(self, message: str):
+        print(f"Error: {message}", file=sys.stderr)
 
-        print("\nOperation completed successfully!")
-        print(f"Input size: {format_size(stats['original_size'])}")
-        print(f"Output size: {format_size(stats['compressed_size'])}")
+    def show_stats(self, stats):
+        if not isinstance(stats, dict):
+            self.show_error("Invalid statistics format")
+            return
 
-        if mode == 'compress':
-            ratio = (1 - stats['compressed_size'] / stats['original_size']) * 100
-            print(f"Compression ratio: {ratio:.1f}% reduction")
+        print("\nOperation Statistics:")
+        for key, value in stats.items():
+            if isinstance(value, (int, float)):
+                if 'size' in key:
+                    print(f"{key.replace('_', ' ').title()}: {self._format_size(value)}")
+                elif 'ratio' in key:
+                    print(f"{key.replace('_', ' ').title()}: {value:.2f}%")
+                elif 'time' in key:
+                    print(f"{key.replace('_', ' ').title()}: {value:.2f} seconds")
+                else:
+                    print(f"{key.replace('_', ' ').title()}: {value}")
 
-        print(f"Time taken: {(end_time - start_time):.2f} seconds")
-        return True
-
-    except Exception as e:
-        print(f"\nError: {str(e)}")
-        return False
-
-
-def main():
-    compressor = RLECompressor()
-
-    while True:
-        print("\n=== RLE File Compression Utility ===")
-        print("1. Compress a file")
-        print("2. Decompress a file")
-        print("3. View file information")
+    def _print_menu(self):
+        print("\nFile Compression Tool")
+        print("1. Compress file")
+        print("2. Decompress file")
+        print("3. File information")
         print("4. Exit")
 
-        choice = input("\nEnter your choice (1-4): ").strip()
+    def _handle_compression(self):
+        input_path = input("Enter the path of the file to compress: ").strip()
+        output_path = input("Enter the path for the compressed file: ").strip()
 
-        if choice == '4':
-            break
+        input_file = Path(input_path)
+        output_file = Path(output_path)
 
-        if choice not in ['1', '2', '3']:
-            print("\nInvalid choice. Please try again.")
-            continue
+        if not input_file.exists():
+            self.show_error(f"File not found: {input_path}")
+            return
 
-        # Get input file path
-        input_file = input("\nEnter input file path: ").strip()
-        input_path = Path(input_file)
+        try:
+            self.process_file('compress', input_file, output_file)
+            stats = self.compressor.get_compression_stats()
+            if stats:  # Only show stats if we got valid statistics
+                self.show_stats(stats)
+        except Exception as e:
+            self.show_error(f"Compression failed: {str(e)}")
 
-        if not input_path.exists():
-            print(f"\nError: File '{input_file}' does not exist")
-            continue
+    def _handle_decompression(self):
+        input_path = input("Enter the path of the file to decompress: ").strip()
+        output_path = input("Enter the path for the decompressed file: ").strip()
 
-        if choice == '3':
-            # Display file information
-            print(get_file_info(input_path))
-            continue
+        input_file = Path(input_path)
+        output_file = Path(output_path)
 
-        # Get output file path
-        output_file = input("Enter output file path: ").strip()
-        output_path = Path(output_file)
+        if not input_file.exists():
+            self.show_error(f"File not found: {input_path}")
+            return
 
-        # Create output directory if it doesn't exist
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.process_file('decompress', input_file, output_file)
+            stats = self.compressor.get_compression_stats()
+            if stats:  # Only show stats if we got valid statistics
+                self.show_stats(stats)
+        except Exception as e:
+            self.show_error(f"Decompression failed: {str(e)}")
 
-        # Process the file
-        if choice == '1':
-            process_file(compressor, input_path, output_path, 'compress')
-        else:  # choice == '2'
-            process_file(compressor, input_path, output_path, 'decompress')
+    def _display_file_info(self):
+        file_path = input("Enter the path of the file: ").strip()
+        path = Path(file_path)
 
+        if not path.exists():
+            self.show_error(f"File not found: {file_path}")
+            return
 
-if __name__ == '__main__':
-    main()
+        print(f"\nFile Information for: {path.name}")
+        print(f"Size: {self._format_size(path.stat().st_size)}")
+        print(f"Extension: {path.suffix or 'None'}")
+        print(f"Last modified: {path.stat().st_mtime}")
+
+    def _format_size(self, size: int) -> str:
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size < 1024:
+                return f"{size:.2f} {unit}"
+            size /= 1024
+        return f"{size:.2f} TB"
