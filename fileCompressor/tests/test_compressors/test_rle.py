@@ -93,7 +93,7 @@ class TestRLECompressor(unittest.TestCase):
         self.assertEqual(stats['original_size'], 0)
         self.assertEqual(stats['compressed_size'], 8)  # Size of the file size header
         self.assertEqual(stats['compression_ratio'], 0)
-        self.assertGreater(stats['time_taken'], 0)
+        self.assertGreater(stats['time_taken'], 0.0)
 
         # Decompress
         self.rle_compressor.decompress(compressed_file, output_file)
@@ -106,7 +106,7 @@ class TestRLECompressor(unittest.TestCase):
         self.assertEqual(stats['original_size'], 0)
         self.assertEqual(stats['compressed_size'], 8)
         self.assertEqual(stats['compression_ratio'], 0)
-        self.assertGreater(stats['time_taken'], 0)
+        self.assertGreater(stats['time_taken'], 0.0)
 
     def test_compression_progress(self):
         """Test progress tracking during compression"""
