@@ -3,8 +3,6 @@ from core.interfaces.ui import BaseUI
 
 
 class TestUI(unittest.TestCase):
-    """Test cases for the BaseUI interface"""
-
     def test_base_ui_is_abstract(self):
         with self.assertRaises(TypeError):
             BaseUI()

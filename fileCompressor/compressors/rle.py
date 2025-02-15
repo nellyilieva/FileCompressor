@@ -1,146 +1,150 @@
-from pathlib import Path
 import time
+from pathlib import Path
 from core.interfaces.compressor import BaseCompressor
 from utils.bit_handler import BitHandler
 from utils.progress_tracker import ProgressTracker
+from utils.file_handler import FileHandler
 
 
 class RLECompressor(BaseCompressor):
-    """Run-Length Encoding compression implementation"""
-
     def __init__(self):
-        self._bit_handler = BitHandler()
-        self._stats = {}
-        self._current_progress = None
+        self.stats = {
+            'original_size': 0,
+            'compressed_size': 0,
+            'compression_ratio': 0,
+            'time_taken': 0
+        }
 
-    def compress(self, input_file: Path, output_file: Path) -> None:
-        """
-        Compress a file using RLE compression
-
-        Args:
-            input_file: Path to input file
-            output_file: Path to output file
-        """
+    def compress(self, input_file: Path, output_file: Path, tracker):
         start_time = time.time()
-        input_size = input_file.stat().st_size
 
-        # Handle empty file case
-        if input_size == 0:
-            with open(output_file, 'wb') as out_file:
-                # Write original file size (0) for decompression
-                out_file.write((0).to_bytes(8, byteorder='big'))
-
-            end_time = time.time()
-            self._stats = {
+        if input_file.stat().st_size == 0:
+            with FileHandler() as fh:
+                fh.open_file(output_file, 'wb')
+                fh.write_chunk(b'')
+            self.stats = {
                 'original_size': 0,
-                'compressed_size': 8,  # Size of the file size header
+                'compressed_size': 0,
                 'compression_ratio': 0,
-                'time_taken': end_time - start_time
+                'time_taken': time.time() - start_time
             }
-            return
+            return self.stats
 
-        self._current_progress = ProgressTracker(max(1, input_size))
+        bit_handler = BitHandler()
+        bytes_processed = 0
 
-        with open(input_file, 'rb') as in_file, open(output_file, 'wb') as out_file:
-            # Write original file size for decompression
-            out_file.write(input_size.to_bytes(8, byteorder='big'))
+        with FileHandler() as fh:
+            fh.open_file(input_file, 'rb')
+            with FileHandler() as fh_out:
+                fh_out.open_file(output_file, 'wb')
+                prev_byte = None
+                count = 0
 
-            # Process file in chunks
-            chunk_size = 8192  # 8KB chunks
-            bytes_processed = 0
-            current_byte = None
-            run_length = 0
+                while True:
+                    byte = fh.read_chunk(1)
+                    if not byte:
+                        break
 
-            while True:
-                chunk = in_file.read(chunk_size)
-                if not chunk:
-                    break
+                    bytes_processed += 1
+                    if tracker:
+                        tracker.update(bytes_processed)
 
-                # Process each byte in the chunk
-                for byte in chunk:
-                    if current_byte is None:
-                        current_byte = byte
-                        run_length = 1
-                        continue
-
-                    if byte == current_byte and run_length < 255:
-                        run_length += 1
+                    if byte == prev_byte:
+                        count += 1
+                        if count == 255:
+                            fh_out.write_chunk(bit_handler.write_byte(count))
+                            fh_out.write_chunk(bit_handler.write_byte(ord(prev_byte)))
+                            count = 0
                     else:
-                        # Write the run
-                        out_file.write(bytes([run_length, current_byte]))
-                        current_byte = byte
-                        run_length = 1
+                        if prev_byte is not None:
+                            fh_out.write_chunk(bit_handler.write_byte(count))
+                            fh_out.write_chunk(bit_handler.write_byte(ord(prev_byte)))
+                        prev_byte = byte
+                        count = 1
 
-                bytes_processed += len(chunk)
-                self._current_progress.update(bytes_processed)
+                if prev_byte is not None:
+                    fh_out.write_chunk(bit_handler.write_byte(count))
+                    fh_out.write_chunk(bit_handler.write_byte(ord(prev_byte)))
 
-            # Write final run if any
-            if current_byte is not None:
-                out_file.write(bytes([run_length, current_byte]))
+                final_bits = bit_handler.flush_bits()
+                if final_bits:
+                    fh_out.write_chunk(final_bits)
 
-        # Update compression statistics
-        end_time = time.time()
+        original_size = input_file.stat().st_size
         compressed_size = output_file.stat().st_size
+        compression_ratio = max(0, (1 - (compressed_size / original_size)) * 100)
 
-        self._stats = {
-            'original_size': input_size,
+        self.stats = {
+            'original_size': original_size,
             'compressed_size': compressed_size,
-            'compression_ratio': input_size / compressed_size if compressed_size > 0 else 0,
-            'time_taken': end_time - start_time
+            'compression_ratio': compression_ratio,
+            'time_taken': time.time() - start_time
         }
 
-    def decompress(self, input_file: Path, output_file: Path) -> None:
-        """
-        Decompress an RLE compressed file
+        return self.stats
 
-        Args:
-            input_file: Path to compressed file
-            output_file: Path to output file
-        """
+    def decompress(self, input_file: Path, output_file: Path, tracker):
         start_time = time.time()
 
-        with open(input_file, 'rb') as in_file, open(output_file, 'wb') as out_file:
-            # Read original file size
-            original_size = int.from_bytes(in_file.read(8), byteorder='big')
+        if input_file.stat().st_size == 0:
+            with FileHandler() as fh:
+                fh.open_file(output_file, 'wb')
+                fh.write_chunk(b'')
+            self.stats = {
+                'original_size': 0,
+                'compressed_size': 0,
+                'decompressed_size': 0,
+                'compression_ratio': 0,
+                'time_taken': time.time() - start_time
+            }
+            return self.stats
 
-            # Handle empty file case
-            if original_size == 0:
-                end_time = time.time()
-                self._stats = {
-                    'original_size': 0,
-                    'compressed_size': input_file.stat().st_size,
-                    'compression_ratio': 0,
-                    'time_taken': end_time - start_time
-                }
-                return
+        bytes_processed = 0
+        with FileHandler() as fh:
+            fh.open_file(input_file, 'rb')
+            decompressed_data = bytearray()
 
-            self._current_progress = ProgressTracker(max(1, original_size))
+            try:
+                while True:
+                    count_chunk = fh.read_chunk(1)
+                    if not count_chunk:
+                        break
 
-            bytes_written = 0
+                    byte_chunk = fh.read_chunk(1)
+                    if not byte_chunk:
+                        raise ValueError("Invalid compressed data: missing byte after count")
 
-            # Read runs until we reach original size
-            while bytes_written < original_size:
-                # Read run length and value
-                run_data = in_file.read(2)
-                if not run_data or len(run_data) != 2:
-                    raise ValueError("Invalid compressed data")
+                    bytes_processed += 2
 
-                run_length, value = run_data
+                    count = int.from_bytes(count_chunk, byteorder='big')
+                    byte = int.from_bytes(byte_chunk, byteorder='big')
 
-                # Write repeated value
-                out_file.write(bytes([value] * run_length))
-                bytes_written += run_length
-                self._current_progress.update(bytes_written)
+                    if count < 1 or count > 255:
+                        raise ValueError("Invalid compressed data: count out of range")
+                    if byte < 0 or byte > 255:
+                        raise ValueError("Invalid compressed data: byte out of range")
 
-        # Update statistics
-        end_time = time.time()
-        self._stats = {
+                    decompressed_data.extend([byte] * count)
+
+            except Exception as e:
+                raise ValueError(f"Invalid compressed data: {str(e)}")
+
+        with FileHandler() as fh_out:
+            fh_out.open_file(output_file, 'wb')
+            fh_out.write_chunk(decompressed_data)
+
+        original_size = input_file.stat().st_size
+        decompressed_size = len(decompressed_data)
+        compression_ratio = max(0, (1 - (original_size / decompressed_size)) * 100) if decompressed_size > 0 else 0
+
+        self.stats = {
             'original_size': original_size,
-            'compressed_size': input_file.stat().st_size,
-            'compression_ratio': original_size / input_file.stat().st_size if input_file.stat().st_size > 0 else 0,
-            'time_taken': end_time - start_time
+            'compressed_size': original_size,
+            'decompressed_size': decompressed_size,
+            'compression_ratio': compression_ratio,
+            'time_taken': time.time() - start_time
         }
+        return self.stats
 
     def get_compression_stats(self):
-        """Get statistics about the last compression/decompression operation"""
-        return self._stats.copy()
+        return self.stats.copy()

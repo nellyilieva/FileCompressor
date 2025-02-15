@@ -3,7 +3,6 @@ from core.interfaces.compressor import BaseCompressor
 
 
 class TestCompressor(unittest.TestCase):
-    """Test cases for the BaseCompressor interface"""
 
     def test_base_compressor_is_abstract(self):
         with self.assertRaises(TypeError):
