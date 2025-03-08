@@ -11,51 +11,115 @@ class CommandLineUI(BaseUI):
         self.engine = CompressionEngine()
         self.current_compressor = None
 
-    def _print_menu(self):
-        print("\nFile Compression Tool")
-        print("1. Compress file")
-        print("2. Decompress file")
-        print("3. File information")
-        print("4. Choose algorithm")
-        print("5. Exit")
-
     def start(self):
+        print("File Compression Tool - Type 'help' for a list of commands.")
         while True:
-            self._print_menu()
-            choice = input("Enter your choice (1-5): ").strip()
-
-            if choice == '1':
-                self._handle_compression()
-            elif choice == '2':
-                self._handle_decompression()
-            elif choice == '3':
-                self._display_file_info()
-            elif choice == '4':
-                self._select_algorithm()
-            elif choice == '5':
-                sys.exit(0)
-            else:
-                print("Invalid choice. Please try again.")
-
-    def _select_algorithm(self):
-        print("\nAvailable compression algorithms:")
-        for i, algo in enumerate(self.engine.available_algorithms, 1):
-            print(f"{i}. {algo.upper()}")
-
-        choice = input("Select algorithm (or leave blank for auto-select): ").strip()
-        if choice:
             try:
-                algo_index = int(choice) - 1
-                if 0 <= algo_index < len(self.engine.available_algorithms):
-                    self.current_compressor = self.engine.available_algorithms[algo_index]
-                    print(f"Selected algorithm: {self.current_compressor.upper()}")
+                command = input("> ").strip().lower()
+                if not command:
+                    continue
+
+                if command == 'help':
+                    self._print_help()
+                elif command.startswith('cf '):
+                    self._handle_compression(command)
+                elif command.startswith('dcf '):
+                    self._handle_decompression(command)
+                elif command == 'rle':
+                    self._select_algorithm('rle')
+                elif command == 'lzw':
+                    self._select_algorithm('lzw')
+                elif command.startswith('stat '):
+                    self._display_file_info(command)
+                elif command == 'exit':
+                    sys.exit(0)
                 else:
-                    print("Invalid selection")
-            except ValueError:
-                print("Invalid input")
+                    print("Invalid command. Type 'help' for a list of commands.")
+            except Exception as e:
+                self.show_error(str(e))
+
+    def _print_help(self):
+        print("\nAvailable commands:")
+        print("  cf <input_file> <output_file> - Compress a file")
+        print("  dcf <input_file> <output_file> - Decompress a file")
+        print("  rle - Select Run-Length Encoding (RLE) algorithm")
+        print("  lzw - Select Lempel-Ziv-Welch (LZW) algorithm")
+        print("  stat <file_path> - Display file information")
+        print("  exit - Exit the program")
+        print("  help - Display this help message")
+
+    def _select_algorithm(self, algorithm: str):
+        if algorithm in self.engine.available_algorithms:
+            self.current_compressor = algorithm
+            print(f"Selected algorithm: {algorithm.upper()}")
         else:
-            self.current_compressor = None
-            print("Algorithm selection set to auto")
+            print(f"Invalid algorithm: {algorithm}")
+
+    def _handle_compression(self, command: str):
+        parts = command.split()
+        if len(parts) != 3:
+            self.show_error("Usage: cf <input_file> <output_file>")
+            return
+
+        input_path, output_path = parts[1], parts[2]
+        input_file = Path(input_path)
+        output_file = Path(output_path)
+
+        if not input_file.exists():
+            self.show_error(f"File not found: {input_path}")
+            return
+
+        extension = self._get_compressed_file_extension()
+        output_file = output_file.with_suffix(extension)
+
+        try:
+            stats = self.process_file('compress', input_file, output_file, self.current_compressor)
+            if stats:
+                self.show_stats(stats)
+        except Exception as e:
+            self.show_error(f"Compression failed: {str(e)}")
+
+    def _handle_decompression(self, command: str):
+        parts = command.split()
+        if len(parts) != 3:
+            self.show_error("Usage: dcf <input_file> <output_file>")
+            return
+
+        input_path, output_path = parts[1], parts[2]
+        input_file = Path(input_path)
+        output_file = Path(output_path)
+
+        if not input_file.exists():
+            self.show_error(f"File not found: {input_path}")
+            return
+
+        try:
+            stats = self.process_file('decompress', input_file, output_file, self.current_compressor)
+            if stats:
+                self.show_stats(stats)
+        except Exception as e:
+            self.show_error(f"Decompression failed: {str(e)}")
+
+    def _display_file_info(self, command: str):
+        parts = command.split()
+        if len(parts) != 2:
+            self.show_error("Usage: stat <file_path>")
+            return
+
+        file_path = parts[1]
+        path = Path(file_path)
+
+        if not path.exists():
+            self.show_error(f"File not found: {file_path}")
+            return
+
+        last_modified_timestamp = path.stat().st_mtime
+        last_modified_time = datetime.fromtimestamp(last_modified_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+
+        print(f"\nFile Information for: {path.name}")
+        print(f"Size: {self._format_size(path.stat().st_size)}")
+        print(f"Extension: {path.suffix or 'None'}")
+        print(f"Last modified: {last_modified_time}")
 
     def _get_compressed_file_extension(self):
         if self.current_compressor:
@@ -124,61 +188,6 @@ class CommandLineUI(BaseUI):
                     print(f"{key.replace('_', ' ').title()}: {value:.2f} seconds")
                 else:
                     print(f"{key.replace('_', ' ').title()}: {value}")
-
-    def _handle_compression(self):
-        input_path = input("Enter the path of the file to compress: ").strip()
-        output_path = input("Enter the path for the compressed file: ").strip()
-
-        input_file = Path(input_path)
-        output_file = Path(output_path)
-
-        if not input_file.exists():
-            self.show_error(f"File not found: {input_path}")
-            return
-
-        extension = self._get_compressed_file_extension()
-        output_file = output_file.with_suffix(extension)
-
-        try:
-            stats = self.process_file('compress', input_file, output_file, self.current_compressor)
-            if stats:
-                self.show_stats(stats)
-        except Exception as e:
-            self.show_error(f"Compression failed: {str(e)}")
-
-    def _handle_decompression(self):
-        input_path = input("Enter the path of the file to decompress: ").strip()
-        output_path = input("Enter the path for the decompressed file: ").strip()
-
-        input_file = Path(input_path)
-        output_file = Path(output_path)
-
-        if not input_file.exists():
-            self.show_error(f"File not found: {input_path}")
-            return
-
-        try:
-            stats = self.process_file('decompress', input_file, output_file, self.current_compressor)
-            if stats:
-                self.show_stats(stats)
-        except Exception as e:
-            self.show_error(f"Decompression failed: {str(e)}")
-
-    def _display_file_info(self):
-        file_path = input("Enter the path of the file: ").strip()
-        path = Path(file_path)
-
-        if not path.exists():
-            self.show_error(f"File not found: {file_path}")
-            return
-
-        last_modified_timestamp = path.stat().st_mtime
-        last_modified_time = datetime.fromtimestamp(last_modified_timestamp).strftime('%Y-%m-%d %H:%M:%S')
-
-        print(f"\nFile Information for: {path.name}")
-        print(f"Size: {self._format_size(path.stat().st_size)}")
-        print(f"Extension: {path.suffix or 'None'}")
-        print(f"Last modified: {last_modified_time}")
 
     def _format_size(self, size):
         for unit in ['B', 'KB', 'MB', 'GB']:

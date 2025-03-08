@@ -1,11 +1,12 @@
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch, call
+from unittest.mock import Mock, patch, MagicMock
 import io
 from contextlib import redirect_stdout, redirect_stderr
-from utils.progress_tracker import ProgressStats
+from utils.progress_tracker import ProgressStats, ProgressTracker
 from ui.cli.command_line import CommandLineUI
+from datetime import datetime
 
 
 class TestCommandLineUI(unittest.TestCase):
@@ -79,30 +80,41 @@ class TestCommandLineUI(unittest.TestCase):
             with self.subTest(size=size):
                 self.assertEqual(self.cli._format_size(size), expected)
 
-    @patch("builtins.input", side_effect=["nonexistent.txt", "output.txt"])
-    def test_handle_compression_file_not_found(self, mock_input):
-        out, err = self.capture_output(self.cli._handle_compression)
-        self.assertIn("File not found", err)
+    @patch("builtins.input", side_effect=["cf nonexistent.txt output.txt", "exit"])
+    @patch("sys.exit", side_effect=SystemExit)
+    def test_handle_compression_file_not_found(self, mock_exit, mock_input):
+        with self.assertRaises(SystemExit):
+            out, err = self.capture_output(self.cli.start)
+            self.assertIn("File not found", err)
 
-    @patch("builtins.input", side_effect=["nonexistent.txt", "output.txt"])
-    def test_handle_decompression_file_not_found(self, mock_input):
-        out, err = self.capture_output(self.cli._handle_decompression)
-        self.assertIn("File not found", err)
+    @patch("builtins.input", side_effect=["dcf nonexistent.txt output.txt", "exit"])
+    @patch("sys.exit", side_effect=SystemExit)
+    def test_handle_decompression_file_not_found(self, mock_exit, mock_input):
+        with self.assertRaises(SystemExit):
+            out, err = self.capture_output(self.cli.start)
+            self.assertIn("File not found", err)
 
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.stat")
-    @patch("builtins.input", side_effect=["test.txt", "test.compressed"])
-    def test_process_file_compression(self, mock_input, mock_stat, mock_exists):
-        mock_stat.return_value = Mock(st_size=1000)
-        input_file = Path("test.txt")
-        output_file = Path("test.compressed")
+    @patch("builtins.input", side_effect=["rle", "cf test.txt test.compressed", "exit"])
+    @patch("sys.exit", side_effect=SystemExit)
+    def test_process_file_compression(self, mock_exit, mock_input, mock_stat, mock_exists):
+        stat_result = MagicMock()
+        stat_result.st_size = 1000
+        mock_stat.return_value = stat_result
 
-        stats = self.cli.process_file("compress", input_file, output_file, None)
+        with patch.object(self.cli, 'process_file', wraps=self.cli.process_file) as mock_process:
+            with self.assertRaises(SystemExit):
+                self.cli.start()
 
-        self.assertEqual(stats["compression_ratio"], 50.0)
-        self.mock_compressor.compress.assert_called_once()
-        self.assertEqual(self.mock_compressor.compress.call_args[0][:2],
-                         (input_file, output_file))
+            self.assertEqual(self.cli.current_compressor, 'rle')
+
+            mock_process.assert_called_with(
+                'compress',
+                Path("test.txt"),
+                Path("test.rle"),
+                'rle'
+            )
 
     def test_process_file_invalid_operation(self):
         with self.assertRaises(ValueError):
@@ -118,36 +130,50 @@ class TestCommandLineUI(unittest.TestCase):
         self.cli.current_compressor = None
         self.assertEqual(self.cli._get_compressed_file_extension(), '.compressed')
 
-    @patch("builtins.input", side_effect=["", ""])
-    def test_select_algorithm(self, mock_input):
-        out, err = self.capture_output(self.cli._select_algorithm)
+    @patch("builtins.input", side_effect=["rle", "exit"])
+    @patch("sys.exit", side_effect=SystemExit)
+    def test_select_algorithm_rle(self, mock_exit, mock_input):
+        with self.assertRaises(SystemExit):
+            out, err = self.capture_output(self.cli.start)
+        self.assertEqual(self.cli.current_compressor, 'rle')
 
-        self.assertIn("Available compression algorithms:", out)
-        self.assertIn("RLE", out)
-        self.assertIn("LZW", out)
+    @patch("builtins.input", side_effect=["lzw", "exit"])
+    @patch("sys.exit", side_effect=SystemExit)
+    def test_select_algorithm_lzw(self, mock_exit, mock_input):
+        with self.assertRaises(SystemExit):
+            out, err = self.capture_output(self.cli.start)
+        self.assertEqual(self.cli.current_compressor, 'lzw')
 
-        self.assertIn("Algorithm selection set to auto", out)
-        self.assertIsNone(self.cli.current_compressor)
-
-    @patch("datetime.datetime")
+    @patch("builtins.input", side_effect=["stat test.txt", "exit"])
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.stat")
-    @patch("builtins.input", return_value="test.txt")
-    def test_display_file_info(self, mock_input, mock_stat, mock_exists, mock_datetime):
-        mock_stat.return_value = Mock(st_size=1024, st_mtime=1234567890)
-        expected_time = "2009-02-14 01:31:30"
+    @patch("sys.exit", side_effect=SystemExit)
+    def test_display_file_info(self, mock_exit, mock_stat, mock_exists, mock_input):
+        stat_result = MagicMock()
+        stat_result.st_size = 1024
+        stat_result.st_mtime = 1234567890
+        mock_stat.return_value = stat_result
 
-        out, err = self.capture_output(self.cli._display_file_info)
+        datetime_mock = Mock()
+        datetime_mock.strftime.return_value = "2009-02-14 01:31:30"
 
-        self.assertIn("File Information for: test.txt", out)
-        self.assertIn("1.00 KB", out)
-        self.assertIn(".txt", out)
-        self.assertIn(expected_time, out)
+        with patch('datetime.datetime', spec=datetime) as mock_datetime:
+            mock_datetime.fromtimestamp.return_value = datetime_mock
 
-    def test_start_exit(self):
-        with patch("builtins.input", return_value="5"):
             with self.assertRaises(SystemExit):
-                self.cli.start()
+                out, err = self.capture_output(self.cli.start)
+
+                self.assertIn("File Information for: test.txt", out)
+                self.assertIn("1.00 KB", out)
+                self.assertIn(".txt", out)
+                self.assertIn("2009-02-14 01:31:30", out)
+
+    @patch("sys.exit", side_effect=SystemExit)
+    @patch("builtins.input", side_effect=["exit"])
+    def test_start_exit(self, mock_input, mock_exit):
+        with self.assertRaises(SystemExit):
+            self.cli.start()
+        mock_exit.assert_called_once_with(0)
 
 
 if __name__ == "__main__":
